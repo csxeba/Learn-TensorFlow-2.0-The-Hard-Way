@@ -16,7 +16,7 @@ def discount_rewards(rewards, gamma=0.99):
     return discounted_r
 
 
-def execute_episode(environment, agent):
+def execute_episode(agent, environment, render=False):
 
     """
     Executes an episode from start to end and buffers the data required for learning.
@@ -29,13 +29,17 @@ def execute_episode(environment, agent):
     state = environment.reset()
     done = False
     reward = 0.
+    step = 0
 
     while 1:
+
+        if render:
+            environment.render()
 
         _states.append(state)
         _rewards.append(reward)
 
-        if done:
+        if done or step >= MAX_STEPS:
             break
 
         logits = agent(state[None, ...])
@@ -43,6 +47,7 @@ def execute_episode(environment, agent):
         _actions.append(action)
 
         state, reward, done, info = environment.step(action)
+        step += 1
 
     return _states, _rewards, _actions
 
@@ -65,11 +70,43 @@ def execute_learning_step(_states, _rewards, _actions):
     return tf.reduce_mean(loss)
 
 
-EPISODES = 500
+def simulate(agent, env, episodes, do_render=False, do_train=True):
+    reward_history = []
+    loss_history = []
+
+    for episode in range(1, episodes + 1):
+
+        states, rewards, actions = execute_episode(agent, env, do_render)
+        reward_history.append(sum(rewards))
+
+        if do_train:
+            training_states = tf.convert_to_tensor(states[:-1])
+            training_rewards = tf.convert_to_tensor(discount_rewards(rewards[1:]))
+            training_actions = tf.convert_to_tensor(actions)
+            training_loss = execute_learning_step(training_states, training_rewards, training_actions)
+            loss_history.append(training_loss)
+
+        print("\rEpisode {:>4} RWD {:>8.2f}".format(
+            episode,
+            np.mean(reward_history[-SMOOTHING_WINDOW_SIZE:])), end="")
+        if do_train:
+            print(" Loss {: >7.4f}  +- {:>7.4f}".format(
+                np.mean(loss_history[-SMOOTHING_WINDOW_SIZE:]),
+                np.std(loss_history[-SMOOTHING_WINDOW_SIZE:])), end="")
+
+        if episode % SMOOTHING_WINDOW_SIZE == 0:
+            print()
+    print()
+    return {"reward": np.array(reward_history), "loss": np.array(loss_history)}
+
+
+EPISODES = 250
 LEARNING_RATE = 1e-3
 SMOOTHING_WINDOW_SIZE = 10
+MAX_STEPS = 300
 
 training_env = gym.make("CartPole-v1")
+testing_env = gym.make("CartPole-v1")
 
 net = tf.keras.models.Sequential([
     tfl.Dense(64, activation="relu"),
@@ -80,41 +117,19 @@ net = tf.keras.models.Sequential([
 cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, name="policy_loss")
 optimizer = tf.keras.optimizers.Adam(LEARNING_RATE)
 
-reward_buffer = []
-loss_buffer = []
+training_history = simulate(net, training_env, episodes=EPISODES)
 
-for episode in range(1, EPISODES+1):
-
-    states, rewards, actions = execute_episode(training_env, net)
-
-    training_states = tf.convert_to_tensor(states[:-1])
-    training_rewards = tf.convert_to_tensor(discount_rewards(rewards[1:]))
-    training_actions = tf.convert_to_tensor(actions)
-
-    training_loss = execute_learning_step(training_states, training_rewards, training_actions)
-
-    reward_buffer.append(sum(rewards))
-    loss_buffer.append(training_loss)
-
-    print("\rEpisode {:>4} RWD {:>8.2f} Loss {: >7.4f}  +- {:>7.4f}".format(
-        episode,
-        np.mean(reward_buffer[-SMOOTHING_WINDOW_SIZE:]),
-        np.mean(loss_buffer[-SMOOTHING_WINDOW_SIZE:]),
-        np.std(loss_buffer[-SMOOTHING_WINDOW_SIZE:])), end="")
-    if episode % SMOOTHING_WINDOW_SIZE == 0:
-        print()
-
-print()
-
-x = np.arange(len(reward_buffer))
+x = np.arange(len(training_history["reward"]))
 
 fig, (top, bot) = plt.subplots(2, sharex="all", figsize=(16, 9))
 
-plot_utils.plot_line_and_smoothing(x, np.array(reward_buffer), smoothing_window=SMOOTHING_WINDOW_SIZE, axes_obj=top)
-plot_utils.plot_line_and_smoothing(x, np.array(loss_buffer), smoothing_window=SMOOTHING_WINDOW_SIZE, axes_obj=top)
+plot_utils.plot_line_and_smoothing(x, training_history["reward"], smoothing_window=SMOOTHING_WINDOW_SIZE, axes_obj=top)
+plot_utils.plot_line_and_smoothing(x, training_history["loss"], smoothing_window=SMOOTHING_WINDOW_SIZE, axes_obj=top)
 
 top.set_title("Policy rewards")
 bot.set_title("Policy losses")
 
 plt.tight_layout()
 plt.show()
+
+simulate(net, testing_env, episodes=10, do_render=True, do_train=False)
