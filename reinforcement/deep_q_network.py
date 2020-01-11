@@ -7,14 +7,6 @@ import tensorflow.keras.layers as tfl
 from utility import plot_utils
 
 
-def _greedy(qs):
-    return tf.argmax(qs, axis=-1)
-
-
-def _epsilon(num_actions):
-    return tf.random.uniform(1, minval=0, maxval=num_actions, dtype=tf.int64)
-
-
 def epsilon_greedy(qs):
     global epsilon
     num_actions = qs.shape[0]
@@ -26,6 +18,17 @@ def epsilon_greedy(qs):
     epsilon *= epsilon_decay
     epsilon = max(epsilon, epsilon_min)
     return action
+
+
+@tf.function
+def make_batch(S, S_, A, R, D, agent):
+    Q = agent(S)
+    Q_target = tf.reduce_max(agent(S_), axis=1)
+    bellman_reserve = GAMMA * Q_target * (1 - tf.cast(D, tf.float32)) + R
+    canvas = tf.one_hot(A, num_actions, dtype=tf.float32)
+    inverse_canvas = 1 - canvas
+    target = canvas * bellman_reserve[:, None] + inverse_canvas * Q
+    return S, target
 
 
 @tf.function
@@ -69,18 +72,6 @@ class LearningBuffer:
         arg = np.random.randint(0, BUFFER_SIZE, size=batch_size)
         return self.states[arg], self.states_next[arg], self.actions[arg], self.rewards[arg], self.dones[arg]
 
-    def make_batch(self, batch_size, agent):
-
-        S, S_, A, R, D = self.sample(batch_size)
-        target = agent(S).numpy()
-        Q_target = tf.reduce_max(agent(S_), axis=1).numpy()
-        bellman_reserve = GAMMA * Q_target + R
-
-        target[range(len(S)), A] = bellman_reserve
-        target[D, A[D]] = R[D]
-
-        return tf.convert_to_tensor(S), tf.convert_to_tensor(target)
-
 
 def simulate(agent: tf.keras.Model, env, buffer: LearningBuffer, episodes, learning_batch_size=None, verbose=1):
 
@@ -107,7 +98,8 @@ def simulate(agent: tf.keras.Model, env, buffer: LearningBuffer, episodes, learn
             buffer.push(state, next_state, action, reward, done)
 
             if learning_batch_size:
-                inputs, targets = buffer.make_batch(learning_batch_size, agent)
+                sample = buffer.sample(batch_size=BATCH_SIZE)
+                inputs, targets = make_batch(*sample, net)
                 loss = learn_step(inputs, targets)
                 losses += loss
 
@@ -137,20 +129,23 @@ def simulate(agent: tf.keras.Model, env, buffer: LearningBuffer, episodes, learn
 
 
 EPISODES = 300
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-3
 BATCH_SIZE = 32
 SMOOTHING_WINDOW_SIZE = 10
 GAMMA = 0.99
 BUFFER_SIZE = 1000
 MAX_STEP = 200
+EPSILON = 1.
+EPSILON_DECAY = 0.9995
+EPSILON_MIN = 0.1
 
 training_env = gym.make("CartPole-v1")
 
 num_actions = training_env.action_space.n
 
 net = tf.keras.models.Sequential([
-    tfl.Dense(400, activation="relu"),
-    tfl.Dense(300, activation="relu"),
+    tfl.Dense(64, activation="relu"),
+    tfl.Dense(64, activation="relu"),
     tfl.Dense(num_actions)
 ])
 
@@ -168,8 +163,9 @@ while not memory_buffer.full:
     print(f"\rFilling replay memory... {memory_buffer.pointer / BUFFER_SIZE:>7.2%}", end="")
 print(f"\rFilling replay memory... 100.00%")
 
-epsilon = 0.1
-epsilon_decay = 1.
+epsilon = EPSILON
+epsilon_decay = EPSILON_DECAY
+epsilon_min = EPSILON_MIN
 
 training_history = simulate(net, training_env, memory_buffer, EPISODES, BATCH_SIZE, verbose=1)
 
@@ -180,7 +176,10 @@ x = np.arange(len(reward_buffer))
 fig, (top, bot) = plt.subplots(2, sharex="all", figsize=(16, 9))
 
 plot_utils.plot_line_and_smoothing(x, np.array(reward_buffer), smoothing_window=SMOOTHING_WINDOW_SIZE, axes_obj=top)
-plot_utils.plot_line_and_smoothing(x, np.array(loss_buffer), smoothing_window=SMOOTHING_WINDOW_SIZE, axes_obj=top)
+plot_utils.plot_line_and_smoothing(x, np.array(loss_buffer), smoothing_window=SMOOTHING_WINDOW_SIZE, axes_obj=bot)
+
+top.grid()
+bot.grid()
 
 top.set_title("DQN rewards")
 bot.set_title("DQN losses")
