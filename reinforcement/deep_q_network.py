@@ -28,6 +28,7 @@ def epsilon_greedy(qs):
     return action
 
 
+@tf.function
 def learn_step(inputs: tf.Tensor, targets: tf.Tensor):
     with tf.GradientTape() as tape:
         qs = net(inputs)
@@ -112,6 +113,7 @@ def simulate(agent: tf.keras.Model, env, buffer: LearningBuffer, episodes, learn
 
             reward_sum += reward
             step += 1
+            state = next_state
 
             if step >= MAX_STEP:
                 break
@@ -140,14 +142,14 @@ BATCH_SIZE = 32
 SMOOTHING_WINDOW_SIZE = 10
 GAMMA = 0.99
 BUFFER_SIZE = 1000
-MAX_STEP = 300
+MAX_STEP = 200
 
 training_env = gym.make("CartPole-v1")
 
 num_actions = training_env.action_space.n
 
 net = tf.keras.models.Sequential([
-    tfl.Dense(400, activation="relu", input_shape=training_env.observation_space.shape),
+    tfl.Dense(400, activation="relu"),
     tfl.Dense(300, activation="relu"),
     tfl.Dense(num_actions)
 ])

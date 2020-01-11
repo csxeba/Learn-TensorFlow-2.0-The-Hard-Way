@@ -111,7 +111,7 @@ testing_env = gym.make("CartPole-v1")
 net = tf.keras.models.Sequential([
     tfl.Dense(64, activation="relu"),
     tfl.Dense(64, activation="relu"),
-    tfl.Dense(2)
+    tfl.Dense(training_env.action_space.n)
 ])
 
 cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, name="policy_loss")
