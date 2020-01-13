@@ -62,7 +62,7 @@ def execute_learning_step(_states, _rewards, _actions):
 
         # Policy gradient is <grad ( -log action prob. )>, so policy loss is <-log action prob.>,
         # which is cross entropy in case of discreete actions.
-        loss = cross_entropy(_actions, logits, sample_weight=r_scaled)
+        loss = tf.keras.losses.categorical_crossentropy(_actions, logits, sample_weight=r_scaled)
 
     policy_gradient = tape.gradient(loss, net.trainable_variables)
     optimizer.apply_gradients(zip(policy_gradient, net.trainable_variables))
@@ -114,7 +114,6 @@ net = tf.keras.models.Sequential([
     tfl.Dense(training_env.action_space.n)
 ])
 
-cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, name="policy_loss")
 optimizer = tf.keras.optimizers.Adam(LEARNING_RATE)
 
 training_history = simulate(net, training_env, episodes=EPISODES)
