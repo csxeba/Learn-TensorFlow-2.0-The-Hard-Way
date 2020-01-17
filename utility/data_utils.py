@@ -34,3 +34,12 @@ class MNIST:
         if batch_size is None:
             batch_size = self.batch_size
         return _make_dataset(self._train, batch_size, include_labels)
+
+
+def normalize(vector):
+    vector_mean = vector.mean()
+    vector_std = vector.std()
+    result = vector - vector_mean
+    if vector_std > 0:
+        result /= vector_std
+    return result

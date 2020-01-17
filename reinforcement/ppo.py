@@ -31,14 +31,11 @@ class PPO:
         self.num_actions = self.actor.output_shape[-1]
 
     @tf.function
-    def train_critic(self, state, state_next, reward, done):
+    def train_critic(self, state, reward):
         state = tf.cast(state, tf.float32)
-        state_next = tf.cast(state_next, tf.float32)
-        value_next = self.critic(state_next)
-        bellman_reserve = value_next * self.gamma * (1 - tf.cast(done, tf.float32)) + reward
         with tf.GradientTape() as tape:
             value = self.critic(state)
-            loss = tf.reduce_mean(tf.keras.losses.mean_squared_error(bellman_reserve, value))
+            loss = tf.reduce_mean(tf.square(value - reward[..., None]))
         gradients = tape.gradient(loss, self.critic.trainable_weights)
         self.critic_opt.apply_gradients(zip(gradients, self.critic.trainable_weights))
         return loss, tf.reduce_mean(value)
@@ -46,14 +43,15 @@ class PPO:
     @tf.function
     def train_actor(self, states, actions, rewards, old_probabilities):
         states = tf.cast(states, tf.float32)
-        values = self.critic(states)
+        values = self.critic(states)[..., 0]
         advantages = rewards - values
         action_onehot = tf.one_hot(actions, depth=self.num_actions)
 
         adv_mean = tf.reduce_mean(advantages)
         adv_std = tf.math.reduce_std(advantages)
         advantages = advantages - adv_mean
-        advantages = advantages / adv_std
+        if adv_std > 0:
+            advantages = advantages / adv_std
 
         old_probabilities_masked = tf.reduce_sum(action_onehot * old_probabilities, axis=1)
         old_log_prob = tf.math.log(old_probabilities_masked)
@@ -71,23 +69,23 @@ class PPO:
             utility = tf.reduce_mean(utilities)
             loss = -entropy * self.beta + utility
 
-        gradients = tape.gradient(loss, self.actor.trainable_weights)
+        gradients = tape.gradient(loss, self.actor.trainable_weights,
+                                  unconnected_gradients=tf.UnconnectedGradients.ZERO)
         self.actor_opt.apply_gradients(zip(gradients, self.actor.trainable_weights))
 
-        kld = tf.reduce_mean(old_probabilities_masked * (old_log_prob - new_log_prob))
+        kld = tf.reduce_mean(old_log_prob - new_log_prob)
         utility_stdev = tf.math.reduce_std(utilities)
 
         return utility, utility_stdev, adv_mean, adv_std, entropy, kld
 
     def train_step(self, state, state_next, action, reward, done, old_probability):
-        critic_loss, value = self.train_critic(state, state_next, reward, done)
+        critic_loss, value = self.train_critic(state, reward)
         actor_loss, actor_loss_std, advantage, adv_std, entropy, kl_div = self.train_actor(
             state, action, reward, old_probability)
-        vars = locals()
         return {k: v for k, v in locals().items() if k in self.logging}
 
     def fit(self, epochs, batch_size, state, state_next, action, reward, done, old_probability):
-        discounted_reward = rl_utils.discount_rewards(reward, done, self.gamma).astype("float32")
+        discounted_reward = rl_utils.discount(reward, done, self.gamma).astype("float32")
         no_samples = len(state)
         datasets = tuple(map(
             tf.data.Dataset.from_tensor_slices, [state, state_next, action, discounted_reward, done, old_probability]))
@@ -195,8 +193,8 @@ EPOCHS = 10
 BATCH_SIZE = 32
 DISCOUNT_FACTOR_GAMMA = 0.99
 ENTROPY_PENALTY_BETA = 0.05
-RATIO_CLIP = 0.2
-ACTOR_LR = 1e-4
-CRITIC_LR = 1e-4
+RATIO_CLIP = 0.3
+ACTOR_LR = 1e-3
+CRITIC_LR = 1e-3
 
 experiment()
