@@ -42,7 +42,7 @@ def execute_episode(agent, environment, render=False):
         if done or step >= MAX_STEPS:
             break
 
-        logits = agent(state[None, ...])
+        logits = agent(state[None, ...].astype("float32"))
         action = tf.random.categorical(logits, num_samples=1)[0].numpy()[0]
         _actions.append(action)
 
@@ -62,7 +62,7 @@ def execute_learning_step(_states, _rewards, _actions):
 
         # Policy gradient is <grad ( -log action prob. )>, so policy loss is <-log action prob.>,
         # which is cross entropy in case of discreete actions.
-        loss = tf.keras.losses.categorical_crossentropy(_actions, logits, sample_weight=r_scaled)
+        loss = cross_entropy(_actions, logits, sample_weight=r_scaled)
 
     policy_gradient = tape.gradient(loss, net.trainable_variables)
     optimizer.apply_gradients(zip(policy_gradient, net.trainable_variables))
@@ -80,8 +80,8 @@ def simulate(agent, env, episodes, do_render=False, do_train=True):
         reward_history.append(sum(rewards))
 
         if do_train:
-            training_states = tf.convert_to_tensor(states[:-1])
-            training_rewards = tf.convert_to_tensor(discount_rewards(rewards[1:]))
+            training_states = tf.convert_to_tensor(states[:-1], dtype=tf.float32)
+            training_rewards = tf.convert_to_tensor(discount_rewards(rewards[1:]), dtype=tf.float32)
             training_actions = tf.convert_to_tensor(actions)
             training_loss = execute_learning_step(training_states, training_rewards, training_actions)
             loss_history.append(training_loss)
@@ -115,6 +115,7 @@ net = tf.keras.models.Sequential([
 ])
 
 optimizer = tf.keras.optimizers.Adam(LEARNING_RATE)
+cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 
 training_history = simulate(net, training_env, episodes=EPISODES)
 
